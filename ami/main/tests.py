@@ -3537,12 +3537,23 @@ class TestProjectPipelinesAPI(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_list_pipelines(self):
-        """Test listing pipelines for a project."""
+        """Test listing pipelines for a project returns the project's enabled pipelines."""
         url = self._get_pipelines_url(self.project.pk)
         self.client.force_authenticate(user=self.user)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.json()["results"]
+        self.assertGreater(len(results), 0)
+
+        # All returned pipelines should belong to this project
+        project_pipeline_names = set(
+            Pipeline.objects.filter(projects=self.project, project_pipeline_configs__enabled=True)
+            .values_list("name", flat=True)
+            .distinct()
+        )
+        response_names = {p["name"] for p in results}
+        self.assertEqual(response_names, project_pipeline_names)
 
     def test_list_pipelines_draft_project_non_member(self):
         """Non-members cannot list pipelines on draft projects."""
