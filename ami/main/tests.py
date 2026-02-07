@@ -3469,7 +3469,7 @@ class TestProjectPipelinesAPI(APITestCase):
         """Get a minimal test payload for pipeline registration."""
         return {
             "processing_service_name": service_name,
-            "pipeline_response": {"timestamp": "2024-01-01T00:00:00Z", "pipelines": [], "success": True},
+            "pipelines": [],
         }
 
     def test_create_new_service_success(self):
@@ -3480,14 +3480,14 @@ class TestProjectPipelinesAPI(APITestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.post(url, payload, format="json")
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         # Verify service was created and associated
         service = ProcessingService.objects.get(name="NewService")
         self.assertIn(self.project, service.projects.all())
 
-    def test_service_already_associated_returns_400(self):
-        """Test 400 when service already exists and is associated with project."""
+    def test_reregistration_is_idempotent(self):
+        """Test that re-registering a service already associated with the project succeeds."""
         # Create and associate service
         service = ProcessingService.objects.create(name="ExistingService")
         service.projects.add(self.project)
@@ -3498,8 +3498,7 @@ class TestProjectPipelinesAPI(APITestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.post(url, payload, format="json")
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("Processing service already exists", response.data["detail"])
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
     def test_associate_existing_service_success(self):
         """Test associating existing service with project when not yet associated."""
@@ -3512,7 +3511,7 @@ class TestProjectPipelinesAPI(APITestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.post(url, payload, format="json")
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn(self.project, service.projects.all())
 
     def test_unauthorized_project_access_returns_403(self):
@@ -3534,3 +3533,11 @@ class TestProjectPipelinesAPI(APITestCase):
         response = self.client.post(url, invalid_payload, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_list_pipelines(self):
+        """Test listing pipelines for a project."""
+        url = self._get_pipelines_url(self.project.pk)
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
