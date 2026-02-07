@@ -3,7 +3,6 @@ import logging
 from django.db import transaction
 from django.db.models import Prefetch
 from django.db.models.query import QuerySet
-from django.shortcuts import get_object_or_404
 from django.utils.text import slugify
 from drf_spectacular.utils import extend_schema
 from rest_framework import exceptions as api_exceptions
@@ -12,7 +11,7 @@ from rest_framework.decorators import action
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from ami.base.permissions import ProjectNestedPermission
+from ami.base.permissions import ProjectPipelineConfigPermission
 from ami.base.views import ProjectMixin
 from ami.main.api.schemas import project_id_doc_param
 from ami.main.api.views import DefaultViewSet
@@ -195,26 +194,27 @@ class ProcessingServiceViewSet(DefaultViewSet, ProjectMixin):
         return Response(response.dict())
 
 
-class ProjectPipelineViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):
+class ProjectPipelineViewSet(ProjectMixin, mixins.ListModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):
     """Pipelines for a specific project. GET lists, POST registers."""
 
     queryset = Pipeline.objects.none()
     serializer_class = PipelineSerializer
-    permission_classes = [ProjectNestedPermission]
+    permission_classes = [ProjectPipelineConfigPermission]
+    require_project = True
 
     def get_queryset(self) -> QuerySet:
-        project_pk = self.kwargs["project_pk"]
+        project = self.get_active_project()
         return (
-            Pipeline.objects.filter(projects=project_pk, project_pipeline_configs__enabled=True)
+            Pipeline.objects.filter(projects=project, project_pipeline_configs__enabled=True)
             .prefetch_related(
                 "algorithms",
                 Prefetch(
                     "processing_services",
-                    queryset=ProcessingService.objects.filter(projects=project_pk),
+                    queryset=ProcessingService.objects.filter(projects=project),
                 ),
                 Prefetch(
                     "project_pipeline_configs",
-                    queryset=ProjectPipelineConfig.objects.filter(project=project_pk),
+                    queryset=ProjectPipelineConfig.objects.filter(project=project),
                 ),
             )
             .distinct()
@@ -248,7 +248,7 @@ class ProjectPipelineViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, vie
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        project = get_object_or_404(Project, pk=self.kwargs["project_pk"])
+        project = self.get_active_project()
 
         with transaction.atomic():
             processing_service, _ = ProcessingService.objects.get_or_create(

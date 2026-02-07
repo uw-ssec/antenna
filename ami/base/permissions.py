@@ -77,42 +77,6 @@ def add_collection_level_permissions(user: User | None, response_data: dict, mod
     return response_data
 
 
-class ProjectNestedPermission(permissions.BasePermission):
-    """
-    Permission for nested project routes (e.g., /projects/{pk}/pipelines/).
-
-    Read-only for any authenticated user who can view the project.
-    Write operations require the user to be a project owner, superuser,
-    or have the ProjectManager role on the project.
-
-    Reusable for any nested route under /projects/ (pipelines, tags, taxa lists, etc.).
-    """
-
-    def has_permission(self, request, view):
-        from ami.main.models import Project
-        from ami.users.roles import ProjectManager
-
-        project_pk = view.kwargs.get("project_pk")
-        if not project_pk:
-            return False
-
-        project = Project.objects.filter(pk=project_pk).first()
-        if not project:
-            return False
-
-        if request.method in permissions.SAFE_METHODS:
-            return True
-
-        user = request.user
-        if not user or not user.is_authenticated:
-            return False
-        if user.is_superuser:
-            return True
-        if project.owner == user:
-            return True
-        return ProjectManager.has_role(user, project)
-
-
 class ObjectPermission(permissions.BasePermission):
     """
     Generic permission class that delegates to the model's `check_permission(user, action)` method.
@@ -123,6 +87,32 @@ class ObjectPermission(permissions.BasePermission):
 
     def has_object_permission(self, request, view, obj: BaseModel):
         return obj.check_permission(request.user, view.action)
+
+
+class ProjectPipelineConfigPermission(ObjectPermission):
+    """
+    Permission for the nested project pipelines route (/projects/{pk}/pipelines/).
+
+    Extends ObjectPermission to handle list/create actions where no object exists yet.
+    Creates a temporary ProjectPipelineConfig instance to leverage BaseModel.check_permission(),
+    which handles draft project visibility and guardian permission checks automatically.
+
+    Follows the same pattern as UserMembershipPermission.
+    """
+
+    def has_permission(self, request, view):
+        from ami.ml.models.project_pipeline_config import ProjectPipelineConfig
+
+        if view.action in ("list", "create"):
+            project = view.get_active_project()
+            if not project:
+                return False
+
+            config = ProjectPipelineConfig(project=project)
+            action = "retrieve" if view.action == "list" else "create"
+            return config.check_permission(request.user, action)
+
+        return super().has_permission(request, view)
 
 
 class UserMembershipPermission(ObjectPermission):
