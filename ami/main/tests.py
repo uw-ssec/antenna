@@ -3449,16 +3449,18 @@ class TestProjectPipelinesAPI(APITestCase):
     """Test the project pipelines API endpoint."""
 
     def setUp(self):
-        from ami.users.roles import ProjectManager
+        from ami.users.roles import ProjectManager, create_roles_for_project
 
-        self.user = User.objects.create_user(email="test@example.com", is_staff=True)  # type: ignore
+        self.user = User.objects.create_user(email="test@example.com")  # type: ignore
         self.other_user = User.objects.create_user(email="other@example.com")  # type: ignore
 
         # Create projects with explicit ownership
         self.project = Project.objects.create(name="Test Project", owner=self.user, create_defaults=True)
         self.other_project = Project.objects.create(name="Other Project", owner=self.other_user, create_defaults=True)
 
-        # Assign ProjectManager role to user for this project
+        # Create role groups and assign permissions
+        create_roles_for_project(self.project)
+        create_roles_for_project(self.other_project)
         ProjectManager.assign_user(self.user, self.project)
 
     def _get_pipelines_url(self, project_id):
@@ -3540,4 +3542,30 @@ class TestProjectPipelinesAPI(APITestCase):
         self.client.force_authenticate(user=self.user)
         response = self.client.get(url)
 
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_list_pipelines_draft_project_non_member(self):
+        """Non-members cannot list pipelines on draft projects."""
+        self.project.draft = True
+        self.project.save()
+
+        non_member = User.objects.create_user(email="nonmember@example.com")  # type: ignore
+        url = self._get_pipelines_url(self.project.pk)
+        self.client.force_authenticate(user=non_member)
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_unauthenticated_write_returns_401(self):
+        """Unauthenticated users cannot register pipelines."""
+        url = self._get_pipelines_url(self.project.pk)
+        payload = self._get_test_payload("AnonService")
+        response = self.client.post(url, payload, format="json")
+        self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
+
+    def test_list_pipelines_public_project_non_member(self):
+        """Non-members can list pipelines on public projects."""
+        non_member = User.objects.create_user(email="reader@example.com")  # type: ignore
+        url = self._get_pipelines_url(self.project.pk)
+        self.client.force_authenticate(user=non_member)
+        response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
