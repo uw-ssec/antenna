@@ -6,4 +6,13 @@ set -o nounset
 
 python /app/manage.py collectstatic --noinput
 
-exec newrelic-admin run-program /usr/local/bin/gunicorn config.asgi --bind 0.0.0.0:5000 --chdir=/app -k uvicorn.workers.UvicornWorker
+# Configurable number of Gunicorn workers (default: auto-detect based on CPU cores)
+WORKERS=${GUNICORN_WORKERS:-0}
+if [ "$WORKERS" -eq 0 ]; then
+    CPU_CORES=$(nproc)
+    WORKERS=$((CPU_CORES * 2 + 1))
+fi
+
+echo "Starting Gunicorn with $WORKERS worker(s)..."
+
+exec newrelic-admin run-program /usr/local/bin/gunicorn config.asgi --bind 0.0.0.0:5000 --workers "$WORKERS" --chdir=/app -k uvicorn.workers.UvicornWorker

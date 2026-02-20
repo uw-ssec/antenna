@@ -241,13 +241,10 @@ class JobViewSet(DefaultViewSet, ProjectMixin):
         from ami.ml.orchestration.nats_queue import TaskQueueManager
 
         async def get_tasks():
-            tasks = []
             async with TaskQueueManager() as manager:
-                for _ in range(batch):
-                    task = await manager.reserve_task(job.pk, timeout=0.1)
-                    if task:
-                        tasks.append(task.dict())
-            return tasks
+                tasks = await manager.reserve_task(job.pk, ntasks=batch, timeout=0.1)
+                tasks = [task.dict() for task in tasks or []]
+                return tasks
 
         # Use async_to_sync to properly handle the async call
         tasks = async_to_sync(get_tasks)()
@@ -300,7 +297,7 @@ class JobViewSet(DefaultViewSet, ProjectMixin):
                     }
                 )
 
-                logger.info(
+                logger.debug(
                     f"Queued pipeline result processing for job {job.pk}, "
                     f"task_id: {task.id}, reply_subject: {reply_subject}"
                 )

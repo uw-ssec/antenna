@@ -80,11 +80,12 @@ class TestTaskQueueManager(unittest.IsolatedAsyncioTestCase):
 
         with patch("ami.ml.orchestration.nats_queue.get_connection", AsyncMock(return_value=(nc, js))):
             async with TaskQueueManager() as manager:
-                task = await manager.reserve_task(123)
+                tasks = await manager.reserve_task(123)
 
-                self.assertIsNotNone(task)
-                self.assertEqual(task.id, sample_task.id)
-                self.assertEqual(task.reply_subject, "reply.subject.123")
+                self.assertIsNotNone(tasks)
+                self.assertEqual(len(tasks), 1)
+                self.assertEqual(tasks[0].id, sample_task.id)
+                self.assertEqual(tasks[0].reply_subject, "reply.subject.123")
                 mock_psub.unsubscribe.assert_called_once()
 
     async def test_reserve_task_no_messages(self):
@@ -98,9 +99,10 @@ class TestTaskQueueManager(unittest.IsolatedAsyncioTestCase):
 
         with patch("ami.ml.orchestration.nats_queue.get_connection", AsyncMock(return_value=(nc, js))):
             async with TaskQueueManager() as manager:
-                task = await manager.reserve_task(123)
+                tasks = await manager.reserve_task(123)
 
-                self.assertIsNone(task)
+                self.assertIsNotNone(tasks)
+                self.assertEqual(len(tasks or []), 0)
                 mock_psub.unsubscribe.assert_called_once()
 
     async def test_acknowledge_task_success(self):
