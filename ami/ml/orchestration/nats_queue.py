@@ -52,9 +52,7 @@ class TaskQueueManager:
     def __init__(self, nats_url: str | None = None, max_ack_pending: int | None = None):
         self.nats_url = nats_url or getattr(settings, "NATS_URL", "nats://nats:4222")
         self.max_ack_pending = max_ack_pending or getattr(settings, "NATS_MAX_ACK_PENDING", 1000)
-        logger.info(
-            f"Initialized TaskQueueManager with NATS URL: {self.nats_url} and max_ack_pending: {self.max_ack_pending}"
-        )
+        logger.info(f"Initialized TaskQueueManager with max_ack_pending: {self.max_ack_pending}")
         self.nc: nats.NATS | None = None
         self.js: JetStreamContext | None = None
 
@@ -170,14 +168,14 @@ class TaskQueueManager:
         self, job_id: int, ntasks: int = 1, timeout: float | None = None
     ) -> list[PipelineProcessingTask] | None:
         """
-        Reserve a task from the specified stream.
+        Reserve tasks from the specified stream.
 
         Args:
             job_id: The job ID (integer primary key) to pull tasks from
             timeout: Timeout in seconds for reservation (default: 5 seconds)
 
         Returns:
-            PipelineProcessingTask with reply_subject set for acknowledgment, or None if no task available
+            PipelineProcessingTask with reply_subject set for acknowledgment, or an empty list if no tasks available
         """
         if self.js is None:
             raise RuntimeError("Connection is not open. Use TaskQueueManager as an async context manager.")
