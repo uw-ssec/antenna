@@ -39,10 +39,11 @@ class TaskQueueManager:
     Use as an async context manager:
         async with TaskQueueManager() as manager:
             await manager.publish_task('job123', {'data': 'value'})
-            task = await manager.reserve_task('job123')
-            await manager.acknowledge_task(task['reply_subject'])
+            tasks = await manager.reserve_task('job123', ntasks=5)
+            for task in tasks:
+                await manager.acknowledge_task(task['reply_subject'])
 
-    Note: The consumer is configured with a max_ack_pending limit (default 500).
+    Note: The consumer is configured with a max_ack_pending limit (default 1000).
     This means you can have at most that many unacknowledged tasks reserved
     at any given time. Once this limit is reached, reserve_task() will timeout
     until some tasks are acknowledged.
@@ -166,7 +167,7 @@ class TaskQueueManager:
             return False
 
     async def reserve_task(
-        self, job_id: int, ntasks=1, timeout: float | None = None
+        self, job_id: int, ntasks: int = 1, timeout: float | None = None
     ) -> list[PipelineProcessingTask] | None:
         """
         Reserve a task from the specified stream.
@@ -197,7 +198,7 @@ class TaskQueueManager:
 
             tasks = []
             try:
-                # Fetch a single message
+                # Fetch messages (up to ntasks)
                 msgs = await psub.fetch(ntasks, timeout=timeout)
 
                 if msgs:
