@@ -41,10 +41,19 @@ class TaskQueueManager:
             await manager.publish_task('job123', {'data': 'value'})
             task = await manager.reserve_task('job123')
             await manager.acknowledge_task(task['reply_subject'])
+
+    Note: The consumer is configured with a max_ack_pending limit (default 500).
+    This means you can have at most that many unacknowledged tasks reserved
+    at any given time. Once this limit is reached, reserve_task() will timeout
+    until some tasks are acknowledged.
     """
 
-    def __init__(self, nats_url: str | None = None):
+    def __init__(self, nats_url: str | None = None, max_ack_pending: int | None = None):
         self.nats_url = nats_url or getattr(settings, "NATS_URL", "nats://nats:4222")
+        self.max_ack_pending = max_ack_pending or getattr(settings, "NATS_MAX_ACK_PENDING", 1000)
+        logger.info(
+            f"Initialized TaskQueueManager with NATS URL: {self.nats_url} and max_ack_pending: {self.max_ack_pending}"
+        )
         self.nc: nats.NATS | None = None
         self.js: JetStreamContext | None = None
 
@@ -106,7 +115,7 @@ class TaskQueueManager:
 
         try:
             info = await self.js.consumer_info(stream_name, consumer_name)
-            logger.debug(f"Consumer {consumer_name} already exists: {info}")
+            logger.debug(f"Consumer {consumer_name} already exists with max_ack_pending={info.config.max_ack_pending}")
         except Exception:
             # Consumer doesn't exist, create it
             await self.js.add_consumer(
@@ -117,11 +126,11 @@ class TaskQueueManager:
                     ack_wait=TASK_TTR,  # Visibility timeout (TTR)
                     max_deliver=5,  # Max retry attempts
                     deliver_policy=DeliverPolicy.ALL,
-                    max_ack_pending=100,  # Max unacked messages
+                    max_ack_pending=self.max_ack_pending,  # Max unacked messages
                     filter_subject=subject,
                 ),
             )
-            logger.info(f"Created consumer {consumer_name}")
+            logger.info(f"Created consumer {consumer_name} with max_ack_pending={self.max_ack_pending}")
 
     async def publish_task(self, job_id: int, data: PipelineProcessingTask) -> bool:
         """
@@ -156,7 +165,9 @@ class TaskQueueManager:
             logger.error(f"Failed to publish task to stream for job '{job_id}': {e}")
             return False
 
-    async def reserve_task(self, job_id: int, timeout: float | None = None) -> PipelineProcessingTask | None:
+    async def reserve_task(
+        self, job_id: int, ntasks=1, timeout: float | None = None
+    ) -> list[PipelineProcessingTask] | None:
         """
         Reserve a task from the specified stream.
 
@@ -184,26 +195,30 @@ class TaskQueueManager:
             # Create ephemeral subscription for this pull
             psub = await self.js.pull_subscribe(subject, consumer_name)
 
+            tasks = []
             try:
                 # Fetch a single message
-                msgs = await psub.fetch(1, timeout=timeout)
+                msgs = await psub.fetch(ntasks, timeout=timeout)
 
                 if msgs:
-                    msg = msgs[0]
-                    task_data = json.loads(msg.data.decode())
-                    metadata = msg.metadata
+                    for msg in msgs:
+                        task_data = json.loads(msg.data.decode())
+                        metadata = msg.metadata
 
-                    # Parse the task data into PipelineProcessingTask
-                    task = PipelineProcessingTask(**task_data)
-                    # Set the reply_subject for acknowledgment
-                    task.reply_subject = msg.reply
+                        # Parse the task data into PipelineProcessingTask
+                        task = PipelineProcessingTask(**task_data)
+                        # Set the reply_subject for acknowledgment
+                        task.reply_subject = msg.reply
 
-                    logger.debug(f"Reserved task from stream for job '{job_id}', sequence {metadata.sequence.stream}")
-                    return task
+                        logger.debug(
+                            f"Reserved task from stream for job '{job_id}', sequence {metadata.sequence.stream}"
+                        )
+                        tasks.append(task)
+                return tasks
 
-            except nats.errors.TimeoutError:
+            except nats.errors.TimeoutError as e:
                 # No messages available
-                logger.debug(f"No tasks available in stream for job '{job_id}'")
+                logger.debug(f"No tasks available in stream for job '{job_id}': {e}")
                 return None
             finally:
                 # Always unsubscribe

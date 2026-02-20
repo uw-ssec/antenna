@@ -6,10 +6,27 @@ set -o nounset
 
 python manage.py migrate
 
+# Configurable number of Gunicorn workers (default: auto-detect based on CPU cores)
+WORKERS=${GUNICORN_WORKERS:-0}
+if [ "$WORKERS" -eq 0 ]; then
+    WORKERS=$(nproc)
+fi
+
+echo "Starting Gunicorn with $WORKERS worker(s)..."
 # Launch VS Code debug server if DEBUGGER environment variable is set to 1
-# Note that the --reload flag is not compatible with debugpy, so manually restart the server when code changes
+# Note that debugging is not compatible with multiple workers, so force single worker
 if [ "${DEBUGGER:-0}" = "1" ]; then
-    exec python -Xfrozen_modules=off -m debugpy --listen 0.0.0.0:5678 -m uvicorn config.asgi:application --host 0.0.0.0
+    exec python -Xfrozen_modules=off -m debugpy --listen 0.0.0.0:5678 -m gunicorn config.asgi --bind 0.0.0.0:8000 --workers 1 -k uvicorn.workers.UvicornWorker
 else
-    exec uvicorn config.asgi:application --host 0.0.0.0 --reload --reload-include '*.html'
+    # Use Gunicorn with UvicornWorker for production-like performance
+    # --reload enables auto-reload for development (works with single worker)
+    if [ "$WORKERS" -eq 1 ]; then
+        # Single worker with reload for development
+        echo "Starting Gunicorn in development mode with auto-reload..."
+        exec gunicorn config.asgi --bind 0.0.0.0:8000 --workers 1 -k uvicorn.workers.UvicornWorker --reload
+    else
+        # Multiple workers for performance testing (no reload)
+        echo "Starting Gunicorn in production mode with $WORKERS workers..."
+        exec gunicorn config.asgi --bind 0.0.0.0:8000 --workers "$WORKERS" -k uvicorn.workers.UvicornWorker
+    fi
 fi
