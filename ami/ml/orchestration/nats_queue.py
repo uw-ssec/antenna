@@ -29,7 +29,7 @@ async def get_connection(nats_url: str):
     return nc, js
 
 
-TASK_TTR = 300  # Default Time-To-Run (visibility timeout) in seconds
+TASK_TTR = 30  # Default Time-To-Run (visibility timeout) in seconds
 
 
 class TaskQueueManager:
